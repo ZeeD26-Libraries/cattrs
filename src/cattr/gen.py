@@ -8,10 +8,13 @@ from ._compat import is_sequence
 @attr.s(slots=True, frozen=True)
 class AttributeOverride(object):
     omit_if_default: Optional[bool] = attr.ib(default=None)
+    rename_to: Optional[str] = attr.ib(default=None)
 
 
-def override(omit_if_default=None):
-    return AttributeOverride(omit_if_default=omit_if_default)
+def override(omit_if_default=None, rename_to=None):
+    return AttributeOverride(
+        omit_if_default=omit_if_default, rename_to=rename_to
+    )
 
 
 _neutral = AttributeOverride()
@@ -32,6 +35,9 @@ def make_dict_unstructure_fn(cl, converter, omit_if_default=False, **kwargs):
     for a in attrs:
         attr_name = a.name
         override = kwargs.pop(attr_name, _neutral)
+        key_name = (
+            attr_name if override.rename_to is None else override.rename_to
+        )
         d = a.default
         if a.type is None:
             # No type annotation, doing runtime dispatch.
@@ -45,39 +51,25 @@ def make_dict_unstructure_fn(cl, converter, omit_if_default=False, **kwargs):
                     globs[def_name] = d.factory
                     if d.takes_self:
                         post_lines.append(
-                            "    if i.{name} != {def_name}(i):".format(
-                                name=attr_name, def_name=def_name
-                            )
+                            f"    if i.{attr_name} != {def_name}(i):"
                         )
                     else:
                         post_lines.append(
-                            "    if i.{name} != {def_name}():".format(
-                                name=attr_name, def_name=def_name
-                            )
+                            f"    if i.{attr_name} != {def_name}():"
                         )
                     post_lines.append(
-                        "        res['{name}'] = i.{name}".format(
-                            name=attr_name
-                        )
+                        f"        res['{key_name}'] = i.{attr_name}"
                     )
                 else:
                     globs[def_name] = d
+                    post_lines.append(f"    if i.{attr_name} != {def_name}:")
                     post_lines.append(
-                        "    if i.{name} != {def_name}:".format(
-                            name=attr_name, def_name=def_name
-                        )
-                    )
-                    post_lines.append(
-                        "        res['{name}'] = __c_u(i.{name})".format(
-                            name=attr_name
-                        )
+                        f"        res['{key_name}'] = __c_u(i.{attr_name})"
                     )
 
             else:
                 # No default or no override.
-                lines.append(
-                    "        '{name}': __c_u(i.{name}),".format(name=attr_name)
-                )
+                lines.append(f"        '{key_name}': __c_u(i.{attr_name}),")
         else:
             # Do the dispatch here and now.
             type = a.type
@@ -95,22 +87,16 @@ def make_dict_unstructure_fn(cl, converter, omit_if_default=False, **kwargs):
                     globs[def_name] = d.factory
                     if d.takes_self:
                         post_lines.append(
-                            "    if i.{name} != {def_name}(i):".format(
-                                name=attr_name, def_name=def_name
-                            )
+                            f"    if i.{attr_name} != {def_name}(i):"
                         )
                     else:
                         post_lines.append(
-                            "    if i.{name} != {def_name}():".format(
-                                name=attr_name, def_name=def_name
-                            )
+                            f"    if i.{attr_name} != {def_name}():"
                         )
                     if conv_function == converter._unstructure_identity:
                         # Special case this, avoid a function call.
                         post_lines.append(
-                            "        res['{name}'] = i.{name}".format(
-                                name=attr_name
-                            )
+                            f"        res['{key_name}'] = i.{attr_name}"
                         )
                     else:
                         unstruct_fn_name = "__cattr_unstruct_{}".format(
@@ -118,23 +104,15 @@ def make_dict_unstructure_fn(cl, converter, omit_if_default=False, **kwargs):
                         )
                         globs[unstruct_fn_name] = conv_function
                         post_lines.append(
-                            "        res['{name}'] = {fn}(i.{name}),".format(
-                                name=attr_name, fn=unstruct_fn_name
-                            )
+                            f"        res['{key_name}'] = {unstruct_fn_name}(i.{attr_name}),"
                         )
                 else:
                     # Default is not a factory, but a constant.
                     globs[def_name] = d
-                    post_lines.append(
-                        "    if i.{name} != {def_name}:".format(
-                            name=attr_name, def_name=def_name
-                        )
-                    )
+                    post_lines.append(f"    if i.{attr_name} != {def_name}:")
                     if conv_function == converter._unstructure_identity:
                         post_lines.append(
-                            "        res['{name}'] = i.{name}".format(
-                                name=attr_name
-                            )
+                            f"        res['{key_name}'] = i.{attr_name}"
                         )
                     else:
                         unstruct_fn_name = "__cattr_unstruct_{}".format(
@@ -142,24 +120,18 @@ def make_dict_unstructure_fn(cl, converter, omit_if_default=False, **kwargs):
                         )
                         globs[unstruct_fn_name] = conv_function
                         post_lines.append(
-                            "        res['{name}'] = {fn}(i.{name})".format(
-                                name=attr_name, fn=unstruct_fn_name
-                            )
+                            f"        res['{key_name}'] = {unstruct_fn_name}(i.{attr_name})"
                         )
             else:
                 # No omitting of defaults.
                 if conv_function == converter._unstructure_identity:
                     # Special case this, avoid a function call.
-                    lines.append(
-                        "    '{name}': i.{name},".format(name=attr_name)
-                    )
+                    lines.append(f"    '{key_name}': i.{attr_name},")
                 else:
                     unstruct_fn_name = "__cattr_unstruct_{}".format(attr_name)
                     globs[unstruct_fn_name] = conv_function
                     lines.append(
-                        "    '{name}': {fn}(i.{name}),".format(
-                            name=attr_name, fn=unstruct_fn_name
-                        )
+                        f"    '{key_name}': {unstruct_fn_name}(i.{attr_name}),"
                     )
     lines.append("    }")
 

@@ -79,7 +79,11 @@ def test_nodefs_generated_unstructuring_cl(converter, cl_and_vals):
                 else:
                     assert attr.name in res
             else:
-                if val == attr.default.factory():
+                if attr.default.takes_self:
+                    d = attr.default.factory(inst)
+                else:
+                    d = attr.default.factory()
+                if val == d:
                     assert attr.name not in res
                 else:
                     assert attr.name in res
@@ -126,7 +130,46 @@ def test_individual_overrides(cl_and_vals):
                 else:
                     assert attr.name in res
             else:
-                if val == attr.default.factory():
+                if attr.default.takes_self:
+                    d = attr.default.factory(inst)
+                else:
+                    d = attr.default.factory()
+
+                if val == d:
                     assert attr.name not in res
                 else:
                     assert attr.name in res
+
+
+@given(nested_classes | simple_classes(min_attrs=1))
+def test_renames(cl_and_vals):
+    """
+    Test renaming individual attributes.
+    """
+    converter = Converter()
+    cl, vals = cl_and_vals
+
+    for attr, val in zip(cl.__attrs_attrs__, vals):
+        break
+    else:
+        assume(False)
+
+    chosen = attr
+
+    for attr, val in zip(cl.__attrs_attrs__, vals):
+        assume(attr.name != "renamed")
+
+    inst = cl(*vals)
+
+    before = converter.unstructure(inst)
+
+    converter.register_unstructure_hook(
+        cl,
+        make_dict_unstructure_fn(
+            cl, converter, **{chosen.name: override(rename_to="renamed")}
+        ),
+    )
+
+    res = converter.unstructure(inst)
+
+    assert res["renamed"] == before[chosen.name]
